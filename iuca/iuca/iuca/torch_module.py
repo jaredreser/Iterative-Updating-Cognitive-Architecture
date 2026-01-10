@@ -56,13 +56,13 @@ class IterativeUpdatingWorkingMemory(nn.Module):
       C: [B, N, d]  candidate pool
       h: [B, N]     inhibition trace (optional)
       r: float      retention fraction override (optional)
-      step: int     for retention schedule (optional)
+      candidate_mask: [B, N] bool mask for eligible candidates (optional)
 
     Outputs:
       W_next: [B, K, d]
       keep_mask: [B, K] (soft)
       select_mask: [B, N] (soft; used for inhibition update)
-      aux: dict with useful diagnostics
+      aux: dict with useful diagnostics (e.g., selection entropy)
     """
     def __init__(
         self,
@@ -104,7 +104,7 @@ class IterativeUpdatingWorkingMemory(nn.Module):
                 nn.Linear(d, d),
             )
 
-    def forward(self, W, C, h=None, r: float | None = None):
+    def forward(self, W, C, h=None, r: float | None = None, candidate_mask: torch.Tensor | None = None):
         B, K, d = W.shape
         _, N, _ = C.shape
         assert K == self.K and d == self.d, "Shape mismatch vs module config."
@@ -129,6 +129,10 @@ class IterativeUpdatingWorkingMemory(nn.Module):
         # --- candidate logits via pooled similarity ---
         logits = torch.einsum("bnd,bd->bn", C, q) / math.sqrt(d)
         logits = logits - self.inhibit_scale * h
+        if candidate_mask is not None:
+            if candidate_mask.shape != logits.shape:
+                raise ValueError("candidate_mask must match shape [B, N].")
+            logits = logits.masked_fill(~candidate_mask.bool(), -1e9)
 
         # --- keep / recruit counts ---
         if r is None:
@@ -154,6 +158,7 @@ class IterativeUpdatingWorkingMemory(nn.Module):
         # NOTE: This does not enforce "no duplicates" w.r.t. kept items; in practice, candidate pools are large,
         # and you can optionally mask candidates that correspond to currently held items if you maintain IDs.
         select_mask_st, select_probs = gumbel_topk_straight_through(logits, k=add_n, tau=self.tau)  # [B, N]
+        selection_entropy = -(select_probs * (select_probs + 1e-9).log()).sum(dim=-1)
 
         # Recruited vectors: [B, add_n, d]
         # Convert selection mask to explicit picks for clarity
@@ -171,5 +176,6 @@ class IterativeUpdatingWorkingMemory(nn.Module):
             "cand_logits": logits,
             "keep_n": keep_n,
             "add_n": add_n,
+            "selection_entropy": selection_entropy,
         }
         return W_next, keep_probs, select_probs, aux

@@ -12,6 +12,40 @@ The goal is to make the architecture **runnable, measurable, and comparable**—
 
 ---
 
+## Quickstart
+
+### NumPy simulator
+
+```python
+from iuca.sim import IterativeWorkingMemorySim
+from iuca.utils import set_seed
+
+set_seed(0)
+sim = IterativeWorkingMemorySim(N=300, K=16, r=0.8, tau=0.8, seed=0)
+overlap, W_next = sim.step()
+print(f"overlap={overlap:.3f}", W_next[:5])
+```
+
+### PyTorch module
+
+```python
+import torch
+from iuca.torch_module import IterativeUpdatingWorkingMemory
+from iuca.utils import set_seed
+
+set_seed(0)
+B, K, N, d = 2, 8, 128, 64
+W = torch.randn(B, K, d)
+C = torch.randn(B, N, d)
+model = IterativeUpdatingWorkingMemory(d=d, K=K)
+candidate_mask = torch.ones(B, N, dtype=torch.bool)
+
+W_next, keep_probs, select_probs, aux = model(W, C, candidate_mask=candidate_mask)
+print(W_next.shape, aux["selection_entropy"])
+```
+
+---
+
 ## Background and reference
 
 This repo is inspired by:
@@ -87,4 +121,3 @@ This section provides a minimal mathematical formalization of an iterative worki
 
 
 At discrete iterations \(t = 0,1,2,\dots\), the system maintains a capacity-limited working set \(W_t\) (the **focus of attention**) of size \(K\). Each update produces a new working set \(W_{t+1}\) by **keeping** \(rK\) slots (retention fraction \(r\in[0,1]\)) and **recruiting** \((1-r)K\) new items from a candidate pool \(C_t\). New recruits are selected by **pooled multiassociative search**: the current working set is pooled into a query \(q_t\), candidates are scored by similarity to \(q_t\), and a Top-K (or differentiable approximation) selects the recruits. Optionally, an inhibition trace \(h_t\) suppresses recently selected/rejected candidates to encourage escape from lures and local attractors.
-
